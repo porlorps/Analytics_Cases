@@ -1,0 +1,479 @@
+---
+title: "COVID Policy on London Bike Hire"
+author: "Danuphat"
+date: "2024-10-31"
+output: html_document
+---
+
+
+```{r setup, message=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+library(tidyverse)
+library(Hmisc)
+library(emmeans)
+library(car)
+library(gridExtra)
+options(width = 100)
+
+```
+
+---
+
+This analysis is modified from a part of my individual assignment in Business Statistic Module, during the Business Analytics course at Warwick Business School 2023-2024.
+
+All rights to this model/code are exclusively reserved by the author (myself and WBS). This work is published solely for portfolio showcase purposes and is not intended for distribution, reproduction, or any commercial use. Any form of copying, reproduction, or redistribution—whether partial or in whole—without explicit prior consent from the author is strictly prohibited. Unauthorized use will be considered a breach of copyright.
+
+---
+
+## Data Dictionary
+
+The data is providing information of number of bike hire from Satander Cycle Hire Scheme during 2010 to 2023 by date. The bike hiring period cover the period that COVID respond policies were applied. The variables are described in the table below.
+
+
+Variable | Description
+------------- | -------------
+Date| The date of record
+Hires| Number of bike hire of the Santander Cycle Hire Scheme
+schools_closed| Whether the school closures policy (complete closures) apply or not (0 not apply, 1 apply)
+pubs_closed| Whether the pub closures policy (exclude food serving pubs) apply or not (0 not apply, 1 apply)
+shops_closed| Whether the shop closures policy (for non-essential shops) apply or not (0 not apply, 1 apply)
+eating_places_closed| Whether the eating places closures policy (include food serving pubs) apply or not (0 not apply, 1 apply)
+stay_at_home| Whether the stay at home order apply or not (0 not apply, 1 apply)
+household_mixing_indoors_banned| Whether the household mixing indoors banned policy apply or not (0 not apply, 1 apply)
+wfh| Whether the working from home encouraged policy apply or not (0 not apply, 1 apply)
+rule_of_6_indoors| Whether the rule of 6 indoors policy apply or not (0 not apply, 1 apply)
+curfew| Whether the 10pm curfew on hospitality apply or not (0 not apply, 1 apply)
+eat_out_to_help_out| Whether the Eat Out to Help Out scheme apply or not (0 not apply, 1 apply)
+day| day of the week of the record
+month| month of the record
+year| year of the record
+
+---
+
+### Read Data
+
+```{r message=FALSE}
+# Read datafile and assign to 'bike' variable
+bike <- read_csv('London_COVID_bikes.csv')
+```
+
+### Data Integrity Check and Data Cleaning
+```{r}
+# Check data integrity
+str(bike) #Check data type
+```
+
+```{r}
+# Change data type of interested variables to factor (wfh, rule_of_6_indoors, eat_out_to_help_out, day, month and year)
+bike <- bike %>% mutate(day=factor(day, levels=c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")))
+bike <- bike %>% mutate(month=factor(month, levels=c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")))
+bike <- bike %>% mutate(year=factor(year, levels=2010:2023))
+bike <- bike %>% mutate(wfh=factor(wfh, levels=c(0,1), labels=c("Work-on-site", "Work from home")))
+bike <- bike %>% mutate(rule_of_6_indoors=factor(rule_of_6_indoors, levels=c(0,1), labels=c("No rule of 6 indoors", "Rule of 6 indoors")))
+bike <- bike %>% mutate(eat_out_to_help_out=factor(eat_out_to_help_out, levels=c(0,1), labels=c("No eat out policy", "Eat out to help out")))
+
+
+str(bike) #Check data type again
+                        
+```
+
+```{r}
+# Use summary to observe the statistical information of the interested data
+summary(bike)
+
+# Found incorrect record in year 2021 which is not leap year but have 366 records (probably duplicated record)
+summary(bike$year)
+```
+
+```{r message=FALSE}
+# Get duplicated records
+bike %>% filter(date == bike[duplicated(bike$date),'date']) # Two duplicated records were from December 13, 2021 which have differ in Work from home variable (one record have 0 and another have 1) which we decide to remove record with 0 due to the policy was effective on December 13, 2021 (https://www.gov.uk/government/news/prime-minister-confirms-move-to-plan-b-in-england)
+
+which(grepl('2021-12-13', bike$date)) # Get row number of duplicated records, which are 4155 and 4156
+
+bike <- bike[-4155,] # Remove specific duplicated records 
+```
+
+```{r}
+# We also found that the minimum of Hires is zero which is abnormal because we focus on analyse the data of bike hire services when the service is available. Found 2 records in Hires which have 0 bike hire, on 2022-09-10 and 2022-09-11 because it was not open on that weekend (https://londonist.com/london/transport/no-santander-cycle-hire-on-weekend-of-10-11-september), since we want to analyse the effect of the three COVID policies on bike hire, the data should only come from the date that bike rental is open for service. Thus, we should remove these 2 records.
+
+bike %>% filter(Hires == 0)
+bike <- bike %>% filter(!Hires == 0)
+
+```
+
+### Plot the Data
+
+#### Plot distribution of the data
+
+```{r message=FALSE, fig.height=5, fig.width=10, fig.cap="Figure 1.1 Histrogram of bike hires with density curve and normal distribution curve"} 
+# Plot data on Hires
+
+color_1 <- c("#67000d", "#a50f15","#cb181d","#ef3b2c","#fb6a4a","#fc9272", "#fcbba1","#fee0d2","#ece7f2","#d0d1e6",  "#74a9cf","#3690c0", "#0570b0", "#023858")
+
+ggplot(data=bike)+
+  geom_histogram(aes(x=Hires, y=..density.. ,fill = year),position = "dodge", binwidth = 3000, alpha=0.6)+
+  labs(x="Number of Bike hires per year", y="Density", title="Histrogram of bike hires with density curve and normal distribution curve")+
+  scale_fill_manual(values = color_1, name="Year")+
+  geom_vline(xintercept = mean(bike$Hires), colour="black" )+
+  geom_density(aes(x=Hires, y=..density..), colour="black" ,alpha=0.5)+
+  stat_function(fun=function(x) {dnorm(x, mean=mean(bike$Hires), sd=sd(bike$Hires))}, col="red", alpha=1)+
+  scale_x_continuous(labels = scales::comma)+
+  scale_y_continuous(labels = scales::comma)+
+  theme(legend.position="bottom")
+
+```
+
+The bike hires data is normally distributed around mean (approx. 26,500). The distribution in the years before COVID (red bar) are positive skewed, while the years after COVID (blue bar) are slightly negative skewed, but in the overall distribution is normal distributed.
+
+The histrogram show extreme outlier above 60,000 bikes per day, but these outlier does not impact to the distribution of the whole data much, moreover, it is not clear that it occurred from data collection process, so, we will not removing these outlier.
+
+
+#### Plot the distribution of three policies across years
+
+```{r fig.height=10, fig.width=10, fig.cap="Figure 1.2 The distribution of number of bike hire from 2010 through 2023 categorise by policies"}
+# Plot the distribution of three policies across year
+alpha_1 <- ifelse(bike$wfh=="Work from home", 0.2, 0.1)
+alpha_2 <- ifelse(bike$rule_of_6_indoors=="Rule of 6 indoors", 0.3, 0.1)
+alpha_3 <- ifelse(bike$eat_out_to_help_out=="Eat out to help out", 0.3, 0.1)
+color_2 <- c("#737373", "#0570b0")
+
+grid.arrange(
+ggplot(data=bike, aes(y=Hires, x=year, col=wfh))+
+  labs(x="Year", y="Number of Bike hires per day", title="The distribution of number of bike hire from 2010 through 2023 with work from home policy", color="Policy")+
+  scale_colour_manual(values = color_2)+
+  geom_jitter(position = position_jitter(0.4), alpha=alpha_1)+
+  geom_violin(color="black",  alpha=0.005)+
+  stat_summary(show.legend = FALSE,fun = "mean", geom = "point", color = "black", aes(shape="mean"))+
+  scale_y_continuous(labels = scales::comma),
+
+ggplot(data=bike, aes(y=Hires, x=year, col=rule_of_6_indoors))+
+  labs(x="Year", y="Number of Bike hires per day", title="The distribution of number of bike hire from 2010 through 2023 with rule of 6 indoor policy", color="Policy")+
+  scale_colour_manual(values = color_2)+
+  geom_jitter(position = position_jitter(0.4), alpha=alpha_2)+
+  geom_violin(color="black",  alpha=0.005)+
+  stat_summary(show.legend = FALSE,fun = "mean", geom = "point", color = "black", aes(shape="mean"))+
+  scale_y_continuous(labels = scales::comma),
+
+ggplot(data=bike, aes(y=Hires, x=year, col=eat_out_to_help_out))+
+  labs(x="Year", y="Number of Bike hires per day", title="The distribution of number of bike hire from 2010 through 2023 with eat out to help out policy", color="Policy")+
+  scale_colour_manual(values = color_2)+
+  geom_jitter(position = position_jitter(0.4), alpha=alpha_3)+
+  geom_violin(color="black",  alpha=0.005)+
+  stat_summary(show.legend = FALSE,fun = "mean", geom = "point", color = "black", aes(shape="mean"))+
+  scale_y_continuous(labels = scales::comma)
+
+,nrow=3)
+
+
+```
+
+
+Jitter plot of three policies divided by year show the proportion of date that the policy apply within each year. the overall of bike rental have been increasing since 2010 and stay steady between 2014 to 2019, and continue increase after 2019, then dramatically drop in first 9 months of 2023.
+
+The plot show that working from home policy have been introduced in 2020, the policy continue effective and more popular in 2022 and 2023. During 2020 and 2021, the plot show that when working from home was not forced, the number of bike hires seems to be higher than the average, but the highest bike hire date still when working from home was encouraged.
+
+While rule of 6 indoors banned policy and Eat out to help out policy had been effective for a shorter period and not going to continue after 2021 and 2020 respectively. On the other hand, the plots show that when rule of 6 indoors banned policy and Eat out to help out policy were forced, the number of bike rental have been higher than the average.
+
+
+#### Plot the distribution of three policies across months
+
+```{r fig.height=10, fig.width=10, fig.cap="Figure 1.3 The distribution of number of bike hire across months categorise by policies"}
+# Plot the distribution of three policies across month
+
+grid.arrange(
+ggplot(data=bike, aes(y=Hires, x=month, col=wfh))+
+  labs(x="Month", y="Number of Bike hires per day", title="The distribution of number of bike hire across month with work from home policy", color="Policy")+
+  scale_colour_manual(values = color_2)+
+  geom_jitter(position = position_jitter(0.4), alpha=alpha_1)+
+  geom_violin(color="black",  alpha=0.005)+
+  stat_summary(show.legend = FALSE,fun = "mean", geom = "point", color = "black", aes(shape="mean"))+
+  scale_y_continuous(labels = scales::comma),
+
+ggplot(data=bike, aes(y=Hires, x=month, col=rule_of_6_indoors))+
+  labs(x="Month", y="Number of Bike hires per day", title="The distribution of number of bike hire across month with rule of 6 indoor policy", color="Policy")+
+  scale_colour_manual(values = color_2)+
+  geom_jitter(position = position_jitter(0.4), alpha=alpha_2)+
+  geom_violin(color="black",  alpha=0.005)+
+  stat_summary(show.legend = FALSE,fun = "mean", geom = "point", color = "black", aes(shape="mean"))+
+  scale_y_continuous(labels = scales::comma),
+
+ggplot(data=bike, aes(y=Hires, x=month, col=eat_out_to_help_out))+
+  labs(x="Month", y="Number of Bike hires per day", title="The distribution of number of bike hire across month with eat out to help out policy", color="Policy")+
+  scale_colour_manual(values = color_2)+
+  geom_jitter(position = position_jitter(0.4), alpha=alpha_3)+
+  geom_violin(color="black",  alpha=0.005)+
+  stat_summary(show.legend = FALSE,fun = "mean", geom = "point", color = "black", aes(shape="mean"))+
+  scale_y_continuous(labels = scales::comma)
+
+, nrow=3)
+
+```
+
+
+Jitter plot of three policies by month shows that the seasonal of bike rental is start from April and at peak in July, before start decreasing.
+
+For each policies, working from home have show some positive effect on March to July (when the bike rental season is going to start) but does not have obvious effect on August to Jan (when the bike rental is continue decreasing). Next, rule of 6 indoors banned policy have applied only for May, June, July, September and October but does not show obviously interaction effect between these months. And the eat out to help out policy only be applied in August and cannot provided any information across month.
+
+
+#### Plot the distribution of three policies across days
+
+```{r fig.height=10, fig.width=10, fig.cap="Figure 1.4 The distribution of number of bike hire across days categorise by policies"}
+# Plot the distribution of three policies across day
+color_3 <- c("#252525", "#023858")
+
+grid.arrange(
+ggplot(data=bike, aes(y=Hires, x=day, col=wfh))+
+  labs(x="Day", y="Number of Bike hires per day", title="The distribution of number of bike hire across day with work from home policy", color="Policy")+
+  scale_colour_manual(values = color_2)+
+  geom_jitter(position = position_jitter(0.4), alpha=alpha_1)+
+  geom_violin(color="black",  alpha=0.005)+
+  geom_violin(aes(fill=wfh),  alpha=0.5,show.legend = FALSE)+
+  scale_fill_manual(values = color_3)+
+  stat_summary(show.legend = FALSE,fun = "mean", geom = "point", color = "black", aes(shape="mean"))+
+  scale_y_continuous(labels = scales::comma),
+
+ggplot(data=bike, aes(y=Hires, x=day, col=rule_of_6_indoors))+
+  labs(x="Day", y="Number of Bike hires per day", title="The distribution of number of bike hire across day with rule of 6 indoor policy", color="Policy")+
+  scale_colour_manual(values = color_2)+
+  geom_jitter(position = position_jitter(0.4), alpha=alpha_2)+
+  geom_violin(color="black",  alpha=0.005)+
+  geom_violin(aes(fill=rule_of_6_indoors), alpha=0.5,show.legend = FALSE)+
+  scale_fill_manual(values = color_3)+
+  stat_summary(show.legend = FALSE,fun = "mean", geom = "point", color = "black", aes(shape="mean"))+
+  scale_y_continuous(labels = scales::comma),
+
+ggplot(data=bike, aes(y=Hires, x=day, col=eat_out_to_help_out))+
+  labs(x="Day", y="Number of Bike hires per day", title="The distribution of number of bike hire across day with eat out to help out policy", color="Policy")+
+  scale_colour_manual(values = color_2)+
+  geom_jitter(position = position_jitter(0.4), alpha=alpha_3)+
+  geom_violin(color="black", alpha=0.005)+
+  geom_violin(aes(fill=eat_out_to_help_out), alpha=0.5,show.legend = FALSE)+
+  scale_fill_manual(values = color_3)+
+  stat_summary(show.legend = FALSE,fun = "mean", geom = "point", color = "black", aes(shape="mean"))+
+  scale_y_continuous(labels = scales::comma)
+
+, nrow=3)
+
+
+```
+
+
+For effect of 3 policies across days, we add the violin plot when the policy is on and off to compare the distribution shape of two class in difference day.
+
+The jitter and violin plot show that, in the overall, the mean of bike hires is higher in weekdays than weekends but the distribution of weekends are wider (violin plots are taller) than weekdays.
+
+For work from home, the policy have some effect on Saturday and Sunday which violin plot of work from home in weekends have been moving upward, while violin plot for weekdays is clustered at the same level between working on site and working from home, but the highest hires is higher when working from home is applied.
+
+For indoors banned policy also seem to have some effect on Friday, Saturday and Sunday as well, since the policy apply on these days make the violin shape vertical flip (from violin to upside down bottle), which mean the bike hires tend to increase in Friday, Saturday and Sunday when the policy applied.
+
+On the contrary, the effect of eat out to help out policy is not clearly seen across days of week because the policy only apply for 28 days (only 4 observations per day).
+
+### Regression Analysis
+
+#### Multicollinearity Check
+```{r}
+# Check Multicollinearity between 3 policies, days, months, years, and bike hires
+# Because 3 policies, days, months and years are categorical data, we will use VIF test to test correlation between 3 policies and days/months/years
+
+# Create regression model to compute VIF score
+m.bike.3pols.d.m.y <- lm(Hires ~ wfh + rule_of_6_indoors + eat_out_to_help_out + day + month + year, data = bike)
+vif(m.bike.3pols.d.m.y)
+
+# We found that the VIF of working from home policy and year of record is highly multicollinear with other variable (It is probably because the policy was announced in 2020 and continue apply until 2023, which make it predictable by year. While other policies were apply for short period of time compare to working from home policy).
+```
+
+```{r}
+# Create regression model by removing year from the model and compute VIF score
+m.bike.3pols.d.m <- lm(Hires ~ wfh + rule_of_6_indoors + eat_out_to_help_out + day + month, data = bike)
+vif(m.bike.3pols.d.m)
+
+# The VIF (GVIF) of model without show less multicollinearity.
+```
+
+#### Effect of working from home encouraged policy, rule of 6 indoors banned policy and eat out help out policy on bike hire
+
+```{r}
+# Create regression model predicting bike hires by using three policies as predictor, then compare the adjusted R-square of model with and without interaction between each policy
+
+# 3 policies without interaction
+
+# Create regression model
+m.bike.policy <- lm(Hires ~  eat_out_to_help_out + wfh + rule_of_6_indoors  , data = bike)
+summary(m.bike.policy)
+```
+
+
+```{r}
+# Create regression model to analyse effect of 3 policies with interaction on bike hire
+m.bike.policy.iter <- lm(Hires ~  wfh * eat_out_to_help_out * rule_of_6_indoors  , data = bike)
+summary(m.bike.policy.iter)
+
+# The adjusted R-squared of the model with interaction show better result compare to model without interaction but the model result also show that the eat out to help out campaign have less number of records (28 records) and not have enough power to predict the effect, it shows NA when interact with work from home and rule of 6 indoors banned policies. 
+
+```
+
+```{r}
+# Create interaction model by remove the interaction between eat out to help out policy to reduce the complexity of the model.
+
+# Create regression model of 3 policies with interaction between work from home and rule of 6 indoors banned policies
+
+m.bike.eat.iter <- lm(Hires ~  eat_out_to_help_out + wfh * rule_of_6_indoors  , data = bike)
+
+```
+
+```{r}
+# Compare model with and without interaction by using ANOVA to see improvement after add interaction effect
+anova(m.bike.policy, m.bike.eat.iter)
+```
+
+By adding the interaction effect of work from home and rule of 6 indoors banned policy to the model is significantly improves the fit $F(1,4804)=6.23, p < 0.013$. 
+
+```{r}
+# Using ANOVA and emmeans to see the interaction effect of work from home and rule of 6 indoors policies
+anova(m.bike.eat.iter)
+(  m.bike.eat.iter.emm <- emmeans(m.bike.eat.iter, ~eat_out_to_help_out + wfh * rule_of_6_indoors)  )
+
+```
+
+```{r message=FALSE, fig.height=5, fig.width=10, fig.cap="Figure 1.5 Number of bike hires prediction with the effect of three policies"}
+
+# Plot prediction to show interaction effect of work from home and rule of 6 indoors
+ggplot(summary(m.bike.eat.iter.emm), aes(x=wfh, y=emmean, ymin=lower.CL, ymax=upper.CL, colour=rule_of_6_indoors)) + 
+  geom_point() + 
+  geom_linerange() + 
+  labs(x="Policy apply", y="Predicted Bike Hires", colour="Rule of 6 indoors policy", title="Number of bike hires prediction with the effect of three policies") + 
+  facet_grid(.~eat_out_to_help_out) +  
+  geom_line()
+```
+
+
+The chart above show interaction between work from home policy and rule of 6 indoors policy, when rule of 6 policy apply, the work from home policy have negative effect on bike hire, but on the other hand, when there was no rule of 6 indoors, the work from policy have slightly positive on bike hire. But the eat out to help out policy does not show the interaction effect to those 2 policies.
+
+
+```{r}
+# Using summary and confint to get effect and confident interval of model
+summary(m.bike.eat.iter)
+cbind(coef(m.bike.eat.iter), confint(m.bike.eat.iter))
+```
+
+Without controlling the effect of Year, Month or Day, the effect of eat out to help out, work from home and rule of 6 indoors policies are described as below,
+
+The eat out to help out policy have significant positive effect on bike hires ($\beta$ = 10326, CI [6775, 13878], $t$(4804) = 5.7, $p$ < 0.0001).
+
+The work from home policy also have significant positive effect on bike hires ($\beta$ = 1313, CI [646, 1980], $t$(4804) = 3.9, $p$ = 0.00011).
+
+The effect of rule of 6 indoors on bike hires is significant positive ($\beta$ = 16544, CI [9918, 23171], $t$(4804) = 4.9, $p$ < 0.0001).
+
+Lastly, the interaction effect of work from home to rule of 6 indoors policy is significant negative ($\beta$ = -8846.0, CI [-15792, -1900], $t$(4804) = -2.5, $p$ = 0.013) and eat out to help out policy does not have prediction power enough to identify interaction effect on work from home and rule of 6 indoors policy.
+
+#### Effect of Day and Month on bike hires
+
+```{r}
+# Because VIF value show that year is multicollinear with WFH, so we will not use it for controlling variable.
+
+# We start look into effect of day on bike hires
+
+# Adding day as control variable to the regression model we already created above.
+m.bike.withday <- lm(Hires ~  eat_out_to_help_out + day + wfh * rule_of_6_indoors, data = bike)
+summary(m.bike.withday) # Day variable has significant main effect to the bike hires
+```
+
+```{r}
+# Create another model with interaction effect of day on work from home, 6 indoors and eat out policy
+m.bike.withday.wfh.iter <- lm(Hires ~  eat_out_to_help_out + day * wfh + wfh * rule_of_6_indoors, data = bike)
+summary(m.bike.withday.wfh.iter) # The interaction effect of day to work from home also significant for almost day, except Saturday.
+```
+
+```{r}
+m.bike.withday.wfh.6indoors.iter <- lm(Hires ~  eat_out_to_help_out + day * wfh + day * rule_of_6_indoors + wfh * rule_of_6_indoors, data = bike)
+summary(m.bike.withday.wfh.6indoors.iter) # The interaction effect of day to rule of 6 indoors policy is not statistically significant.
+```
+
+```{r}
+m.bike.withday.wfh.6indoors.eat.iter <- lm(Hires ~  eat_out_to_help_out + day * wfh + day * rule_of_6_indoors + day * eat_out_to_help_out  + wfh * rule_of_6_indoors, data = bike)
+summary(m.bike.withday.wfh.6indoors.eat.iter) # There was no interaction effect between day and eat out policy.
+```
+
+```{r}
+# Using ANOVA to compare the improvement of models when controlling day
+anova(m.bike.eat.iter, m.bike.withday, m.bike.withday.wfh.iter, m.bike.withday.wfh.6indoors.iter, m.bike.withday.wfh.6indoors.eat.iter)
+```
+
+
+The ANOVA analysis show that, by controlling day, the model is significantly improved the fit $F(6,4798)=42.0, p < .0001$ and when continue adding the interaction effect of day on work from home policy to the model, it is significantly improve the model fit more $F(6,4792)=13.7, p < .0001$. But adding more interaction effect of day to rule of 6 indoors and eat out to help out policy are not significantly improve the model fit $F(6,4786)=1.48, p = 0.18$ and $F(6,4780)=0.67, p = 0.67$ respectively.
+
+```{r}
+# The effect of month on bike hires
+
+# Adding month as control variable to the regression model we already created above.
+m.bike.withmonth <- lm(Hires ~  eat_out_to_help_out + month + wfh * rule_of_6_indoors, data = bike)
+summary(m.bike.withmonth) # Month variable itself has significant main effect to the bike hires
+```
+
+```{r}
+# Create another model with interaction effect of day on work from home, 6 indoors and eat out policy
+m.bike.withmonth.wfh.iter <- lm(Hires ~  eat_out_to_help_out + month * wfh + wfh * rule_of_6_indoors, data = bike)
+summary(m.bike.withmonth.wfh.iter) # The interaction effect of month to work from home is significant for some months
+```
+
+```{r}
+m.bike.withmonth.wfh.6indoors.iter <- lm(Hires ~  eat_out_to_help_out + month * wfh + month * rule_of_6_indoors + wfh * rule_of_6_indoors, data = bike)
+summary(m.bike.withmonth.wfh.6indoors.iter) # The interaction effect of month to rule of 6 indoors policy is not statistically significant.
+```
+
+```{r}
+m.bike.withmonth.wfh.6indoors.eat.iter <- lm(Hires ~  eat_out_to_help_out + month * wfh + month * rule_of_6_indoors + month * eat_out_to_help_out  + wfh * rule_of_6_indoors, data = bike)
+summary(m.bike.withmonth.wfh.6indoors.eat.iter) # There was no prediction power for interaction effect between month and eat out policy.
+```
+
+```{r}
+# Using ANOVA to compare the improvement of models when controlling day
+anova(m.bike.eat.iter, m.bike.withmonth, m.bike.withmonth.wfh.iter, m.bike.withmonth.wfh.6indoors.iter, m.bike.withmonth.wfh.6indoors.eat.iter)
+```
+
+
+The ANOVA analysis show that, by controlling month, the fit of model is significantly improved $F(11,4793)=231.5, p < .0001$ and continue significantly improved when adding more interaction effect of month on work from home policy $F(6,4782)=3.9, p < .0001$. On the contrary, adding more interaction effect of month to rule of 6 indoors is not significantly improve the model fit $F(6,4778)=1.1, p = 0.37$.
+
+
+```{r fig.height=5, fig.width=10, fig.cap="Figure 1.6 Number of bike hires prediction with the effect of month and day"}
+color_4 <- c( "#d94801", "#7bccc4", "#00441b", "#4eb3d3", "#0868ac", "#8c6bb1","#fc4e2a" )
+
+# Plot the interaction effect of day and month
+m.bike.withdaymonth <- lm(Hires ~ day*month, data = bike)
+m.bike.withdaymonth.emm <- emmeans(m.bike.withdaymonth, ~day*month)
+
+ggplot(summary(m.bike.withdaymonth.emm), aes(x=month, y=emmean, ymin=lower.CL, ymax=upper.CL, colour=day, group=day, alpha=0.5))+ 
+  scale_colour_manual(values = color_4)+
+  geom_point(show.legend = FALSE) + 
+  geom_linerange(show.legend = FALSE) + 
+  labs(x="Month", y="Predicted Bike Hires", colour="Day", title = "Number of bike hires prediction with the effect of month and day") + 
+  geom_line()+
+  guides(alpha = "none")
+
+```
+
+
+The graph show that the slope from low season to high season on weekends is higher than the slop of weekdays which mean day and month have different interaction effect on weekends and weekdays. Thus, we should taking interaction effect of day and month into account.
+
+```{r}
+# Create another regression model by adding both day and month as predictor
+m.bike.withdaymonth.wfh.iter <- lm(Hires ~  eat_out_to_help_out + day * wfh + month * wfh + wfh * rule_of_6_indoors, data = bike)
+summary(m.bike.withdaymonth.wfh.iter)
+```
+```{r}
+# Create another regression model by include interaction effect between day and month
+m.bike.withdaymonth.wfh.iter2 <- lm(Hires ~  eat_out_to_help_out + day * wfh + month * wfh + day * month + wfh * rule_of_6_indoors, data = bike)
+summary(m.bike.withdaymonth.wfh.iter2)
+```
+```{r}
+# Using ANOVA to compare the improvement between model
+
+anova(m.bike.eat.iter, m.bike.withdaymonth.wfh.iter, m.bike.withdaymonth.wfh.iter2)
+
+```
+
+
+The ANOVA analysis show that using both day and month as control variables will significantly improve the fit of model, by adding the main effect of day and month and interaction effect of day and month with work from home policy to the model, it will significantly improve the fit $F(34,4770)=100.7, p < 0.0001$. Moreover, by adding more interaction effect between day and month itself, the fit will significantly improve $F(66,4704)=1.4, p = 0.018$.
+
+In summary, as mentioned in the analysis above, controlling the effect of day, month and interaction effect of day and month is appropriate to increase the prediction power of the model when control interaction effect with work from home, but there was no significant improvement when controlling effect of day and month interaction with rule of 6 indoors policy and eat out to eat out policy. While year should not be use as control variable because year have multicollinearity with work from home policy and should not be use as independent variable together.
